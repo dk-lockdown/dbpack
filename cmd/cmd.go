@@ -18,9 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -54,8 +51,7 @@ func main() {
 }
 
 var (
-	Version               = "0.1.0"
-	defaultHTTPListenPort = 18888
+	Version = "0.1.0"
 
 	configPath string
 
@@ -72,7 +68,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			//h := initHolmes()
 			//h.Start()
-			conf := config.Load(configPath)
+			conf := config.Load(configPath, config.WithDefaultHttpConf())
 
 			for _, filterConf := range conf.Filters {
 				factory := filter.GetFilterFactory(filterConf.Kind)
@@ -167,20 +163,8 @@ var (
 				os.Exit(1) // second signal. Exit directly.
 			}()
 
-			// init metrics for prometheus server scrape.
-			// default listen at 18888
-			var lis net.Listener
-			var lisErr error
-			if conf.HTTPListenPort != nil {
-				lis, lisErr = net.Listen("tcp4", fmt.Sprintf(":%d", *conf.HTTPListenPort))
-			} else {
-				lis, lisErr = net.Listen("tcp4", fmt.Sprintf(":%d", defaultHTTPListenPort))
-			}
-
-			if lisErr != nil {
-				log.Fatalf("unable init metrics server: %+v", lisErr)
-			}
-			go initServer(ctx, lis)
+			// init http server.
+			go dbpackHttp.InitHttpServer(ctx, conf.HttpConf)
 
 			dbpack.Start(ctx)
 		},
@@ -191,27 +175,6 @@ var (
 func init() {
 	startCommand.PersistentFlags().StringVarP(&configPath, constant.ConfigPathKey, "c", os.Getenv(constant.EnvDBPackConfig), "Load configuration from `FILE`")
 	rootCommand.AddCommand(startCommand)
-}
-
-func initServer(ctx context.Context, lis net.Listener) {
-	go func() {
-		<-ctx.Done()
-		lis.Close()
-	}()
-	handler, err := dbpackHttp.RegisterRoutes()
-	if err != nil {
-		log.Fatalf("failed to init handler: %+v", err)
-		return
-	}
-	httpS := &http.Server{
-		Handler: handler,
-	}
-	err = httpS.Serve(lis)
-	if err != nil {
-		log.Fatalf("unable create status server: %+v", err)
-		return
-	}
-	log.Infof("start api server :  %s", lis.Addr())
 }
 
 //func initHolmes() *holmes.Holmes {

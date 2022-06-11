@@ -17,12 +17,62 @@
 package http
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
+
+	"github.com/cectc/dbpack/pkg/config"
+	"github.com/cectc/dbpack/pkg/log"
 )
 
-func RegisterRoutes() (http.Handler, error) {
+func InitHttpServer(ctx context.Context, conf config.HttpConf) {
+	lis, err := net.Listen("tcp4", fmt.Sprintf(":%d", conf.Port))
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() {
+		<-ctx.Done()
+		if err := lis.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
+	handler := RegisterRoutes()
+	server := &http.Server{
+		Handler: handler,
+	}
+	err = server.Serve(lis)
+	if err != nil {
+		log.Fatalf("unable create status server: %+v", err)
+	}
+	grpcServer := RegisterGrpc(conf)
+	err = grpcServer.Serve(lis)
+	if err != nil {
+		log.Fatalf("unable create status server: %+v", err)
+	}
+	log.Infof("start api server :  %s", lis.Addr())
+}
+
+func RegisterGrpc(conf config.HttpConf) *grpc.Server {
+	s := grpc.NewServer(grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime:             conf.Grpc.EnforcementPolicy.MinTime,
+		PermitWithoutStream: conf.Grpc.EnforcementPolicy.PermitWithoutStream,
+	}), grpc.KeepaliveParams(keepalive.ServerParameters{
+		MaxConnectionIdle:     conf.Grpc.ServerParameters.MaxConnectionIdle,
+		MaxConnectionAge:      conf.Grpc.ServerParameters.MaxConnectionAge,
+		MaxConnectionAgeGrace: conf.Grpc.ServerParameters.MaxConnectionAgeGrace,
+		Time:                  conf.Grpc.ServerParameters.Time,
+		Timeout:               conf.Grpc.ServerParameters.Timeout,
+	}))
+	RegisterProxyServiceServer(s, svc)
+	return s
+}
+
+func RegisterRoutes() http.Handler {
 	router := mux.NewRouter().SkipClean(true).UseEncodedPath()
 	// Add healthcheck router
 	registerHealthCheckRouter(router)
@@ -33,5 +83,5 @@ func RegisterRoutes() (http.Handler, error) {
 	// Add status router
 	registerStatusRouter(router)
 
-	return router, nil
+	return router
 }

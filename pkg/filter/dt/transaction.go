@@ -26,11 +26,12 @@ import (
 
 	"github.com/cectc/dbpack/pkg/dt"
 	"github.com/cectc/dbpack/pkg/dt/api"
+	dbpackHttp "github.com/cectc/dbpack/pkg/http"
 	"github.com/cectc/dbpack/pkg/log"
 )
 
 // handleHttp1GlobalBegin return bool, represent whether continue
-func (f *_httpFilter) handleHttp1GlobalBegin(ctx *fasthttp.RequestCtx, transactionInfo *TransactionInfo) (bool, error) {
+func (f *_httpFilter) handleHttp1GlobalBegin(ctx *fasthttp.RequestCtx, transactionInfo *dbpackHttp.TransactionInfo) (bool, error) {
 	// todo support transaction isolation level
 	transactionManager := dt.GetDistributedTransactionManager()
 	xid, err := transactionManager.Begin(ctx, transactionInfo.RequestPath, transactionInfo.Timeout)
@@ -63,7 +64,7 @@ func (f *_httpFilter) handleHttp1GlobalEnd(ctx *fasthttp.RequestCtx) error {
 }
 
 // handleHttp1BranchRegister return bool, represent whether continue
-func (f *_httpFilter) handleHttp1BranchRegister(ctx *fasthttp.RequestCtx, tccResource *TCCResource) (bool, error) {
+func (f *_httpFilter) handleHttp1BranchRegister(ctx *fasthttp.RequestCtx, tccResource *dbpackHttp.TccResourceInfo) (bool, error) {
 	xid := ctx.Request.Header.Peek(XID)
 	if string(xid) == "" {
 		ctx.Error(`{"error":"failed to get XID from request header"}`, http.StatusInternalServerError)

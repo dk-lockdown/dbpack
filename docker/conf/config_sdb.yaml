@@ -45,4 +45,5 @@ distributed_transaction:
     endpoints:
       - etcd:2379
 
-http_listen_port: 9999
+http:
+  port: 9999

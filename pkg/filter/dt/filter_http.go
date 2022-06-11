@@ -24,6 +24,7 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/cectc/dbpack/pkg/filter"
+	dbpackHttp "github.com/cectc/dbpack/pkg/http"
 	"github.com/cectc/dbpack/pkg/log"
 	"github.com/cectc/dbpack/pkg/proto"
 )
@@ -53,18 +54,23 @@ func (factory *httpFactory) NewFilter(config map[string]interface{}) (proto.Filt
 	}
 
 	f := &_httpFilter{
-		conf:             filterConfig,
-		transactionInfos: make(map[string]*TransactionInfo),
-		tccResources:     make(map[string]*TCCResource),
+		conf: filterConfig,
 	}
 
 	for _, ti := range filterConfig.TransactionInfos {
-		f.transactionInfos[strings.ToLower(ti.RequestPath)] = ti
+		dbpackHttp.AddTransactionInfo(&dbpackHttp.TransactionInfo{
+			RequestPath: ti.RequestPath,
+			Timeout:     ti.Timeout,
+		})
 		log.Debugf("proxy %s, will create global transaction, put xid into request header", ti.RequestPath)
 	}
 
-	for _, r := range filterConfig.TCCResources {
-		f.tccResources[strings.ToLower(r.PrepareRequestPath)] = r
+	for _, r := range filterConfig.TccResourceInfos {
+		dbpackHttp.AddTccResourceInfo(&dbpackHttp.TccResourceInfo{
+			PrepareRequestPath:  r.PrepareRequestPath,
+			CommitRequestPath:   r.CommitRequestPath,
+			RollbackRequestPath: r.RollbackRequestPath,
+		})
 		log.Debugf("proxy %s, will register branch transaction", r.PrepareRequestPath)
 	}
 	return f, nil
@@ -76,8 +82,8 @@ type TransactionInfo struct {
 	Timeout     int32  `yaml:"timeout" json:"timeout"`
 }
 
-// TCCResource tcc resource config
-type TCCResource struct {
+// TccResourceInfo tcc resource config
+type TccResourceInfo struct {
 	PrepareRequestPath  string `yaml:"prepare_request_path" json:"prepare_request_path"`
 	CommitRequestPath   string `yaml:"commit_request_path" json:"commit_request_path"`
 	RollbackRequestPath string `yaml:"rollback_request_path" json:"rollback_request_path"`
@@ -89,13 +95,11 @@ type HttpFilterConfig struct {
 	BackendHost   string `yaml:"backend_host" json:"backend_host"`
 
 	TransactionInfos []*TransactionInfo `yaml:"transaction_infos" json:"transaction_infos"`
-	TCCResources     []*TCCResource     `yaml:"tcc_resources" json:"tcc_resources"`
+	TccResourceInfos []*TccResourceInfo `yaml:"tcc_resource_infos" json:"tcc_resource_infos"`
 }
 
 type _httpFilter struct {
-	conf             *HttpFilterConfig
-	transactionInfos map[string]*TransactionInfo
-	tccResources     map[string]*TCCResource
+	conf *HttpFilterConfig
 }
 
 func (f *_httpFilter) GetKind() string {
@@ -110,7 +114,8 @@ func (f _httpFilter) PreHandle(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	transactionInfo, found := f.transactionInfos[strings.ToLower(string(path))]
+	transactionInfos := dbpackHttp.GetTransactionInfos()
+	transactionInfo, found := transactionInfos[strings.ToLower(string(path))]
 	if found {
 		result, err := f.handleHttp1GlobalBegin(ctx, transactionInfo)
 		if !result {
@@ -121,9 +126,10 @@ func (f _httpFilter) PreHandle(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	tccResource, exists := f.tccResources[strings.ToLower(string(path))]
+	tccResourceInfos := dbpackHttp.GetTccResourceInfo()
+	tccResourceInfo, exists := tccResourceInfos[strings.ToLower(string(path))]
 	if exists {
-		result, err := f.handleHttp1BranchRegister(ctx, tccResource)
+		result, err := f.handleHttp1BranchRegister(ctx, tccResourceInfo)
 		if !result {
 			if err := f.handleHttp1BranchEnd(ctx); err != nil {
 				log.Error(err)
@@ -142,14 +148,16 @@ func (f _httpFilter) PostHandle(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	_, found := f.transactionInfos[strings.ToLower(string(path))]
+	transactionInfos := dbpackHttp.GetTransactionInfos()
+	_, found := transactionInfos[strings.ToLower(string(path))]
 	if found {
 		if err := f.handleHttp1GlobalEnd(ctx); err != nil {
 			return err
 		}
 	}
 
-	_, exists := f.tccResources[strings.ToLower(string(path))]
+	tccResourceInfos := dbpackHttp.GetTccResourceInfo()
+	_, exists := tccResourceInfos[strings.ToLower(string(path))]
 	if exists {
 		if err := f.handleHttp1BranchEnd(ctx); err != nil {
 			return err

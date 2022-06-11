@@ -52,4 +52,5 @@ data_source_cluster:
     ping_interval: 20s
     ping_times_for_change_status: 3
 
-http_listen_port: 9999
+http:
+  port: 9999

@@ -31,6 +31,10 @@ import (
 	"github.com/cectc/dbpack/pkg/log"
 )
 
+var (
+	defaultHttpPort = 18888
+)
+
 type Configuration struct {
 	Listeners []*Listener `yaml:"listeners" json:"listeners"`
 
@@ -42,9 +46,9 @@ type Configuration struct {
 
 	DistributedTransaction *DistributedTransaction `yaml:"distributed_transaction" json:"distributed_transaction"`
 
-	TerminationDrainDuration time.Duration `yaml:"termination_drain_duration" json:"termination_drain_duration"`
+	HttpConf HttpConf `yaml:"http" json:"http"`
 
-	HTTPListenPort *int `yaml:"http_listen_port"`
+	TerminationDrainDuration time.Duration `yaml:"termination_drain_duration" json:"termination_drain_duration"`
 }
 
 type (
@@ -94,6 +98,16 @@ type (
 		EtcdConfig clientv3.Config `yaml:"etcd_config" json:"etcd_config"`
 	}
 
+	HttpConf struct {
+		Port int   `yaml:"port" json:"port"`
+		Grpc *Grpc `yaml:"grpc" json:"grpc"`
+	}
+
+	Grpc struct {
+		EnforcementPolicy EnforcementPolicy `yaml:"enforcement_policy" json:"enforcement_policy"`
+		ServerParameters  ServerParameters  `yaml:"server_parameters" json:"server_parameters"`
+	}
+
 	EnforcementPolicy struct {
 		MinTime             time.Duration `yaml:"min_time" json:"min_time"`
 		PermitWithoutStream bool          `yaml:"permit_without_stream" json:"permit_without_stream"`
@@ -107,11 +121,7 @@ type (
 		Timeout               time.Duration `yaml:"timeout" json:"Timeout"`
 	}
 
-	ClientParameters struct {
-		Time                time.Duration `yaml:"time" json:"-"`
-		Timeout             time.Duration `yaml:"timeout" json:"-"`
-		PermitWithoutStream bool          `yaml:"permit_without_stream"`
-	}
+	ConfigurationOption func(conf *Configuration)
 )
 
 const (
@@ -179,13 +189,40 @@ func parse(content []byte) *Configuration {
 	return cfg
 }
 
+func WithDefaultHttpConf() ConfigurationOption {
+	return func(conf *Configuration) {
+		if conf.HttpConf.Port == 0 {
+			conf.HttpConf.Port = defaultHttpPort
+		}
+		if conf.HttpConf.Grpc == nil {
+			conf.HttpConf.Grpc = &Grpc{
+				EnforcementPolicy: EnforcementPolicy{
+					MinTime:             5 * time.Minute,
+					PermitWithoutStream: true,
+				},
+				ServerParameters: ServerParameters{
+					MaxConnectionIdle:     15 * time.Second,
+					MaxConnectionAge:      30 * time.Second,
+					MaxConnectionAgeGrace: 5 * time.Second,
+					Time:                  5 * time.Second,
+					Timeout:               20 * time.Second,
+				},
+			}
+		}
+	}
+}
+
 // Load config file and parse
-func Load(path string) *Configuration {
+func Load(path string, opts ...ConfigurationOption) *Configuration {
 	configPath, _ := filepath.Abs(path)
 	log.Infof("load config from :  %s", configPath)
 	content, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		log.Fatalf("[config] [default load] load config failed, error: %v", err)
 	}
-	return parse(content)
+	conf := parse(content)
+	for _, opt := range opts {
+		opt(conf)
+	}
+	return conf
 }
